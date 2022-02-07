@@ -1,8 +1,8 @@
-from enum import Enum
-from operator import mod
 import pickle
-import typer
+from enum import Enum
 from pathlib import Path
+
+import typer
 from sklearn.datasets import load_iris
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier

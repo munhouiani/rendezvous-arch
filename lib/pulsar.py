@@ -1,6 +1,7 @@
 import _pulsar
 import pulsar
 import socket
+import sys
 
 
 def get_client(pulsar_host: str, pulsar_port: str):
@@ -12,7 +13,7 @@ def get_client(pulsar_host: str, pulsar_port: str):
         s.close()
         return client
     except (_pulsar.ConnectError, _pulsar.Timeout, OSError):
-        exit(1)
+        sys.exit(1)
 
 
 def get_producer(client, topic: str):
@@ -21,7 +22,7 @@ def get_producer(client, topic: str):
         return producer
     except (_pulsar.ConnectError, _pulsar.Timeout):
         client.close()
-        exit(1)
+        sys.exit(1)
 
 
 def get_consumer(client, topic: str, subscription_name: str):
@@ -30,4 +31,4 @@ def get_consumer(client, topic: str, subscription_name: str):
         return consumer
     except (_pulsar.ConnectError, _pulsar.Timeout):
         client.close()
-        exit(1)
+        sys.exit(1)

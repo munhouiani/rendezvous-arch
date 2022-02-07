@@ -4,28 +4,27 @@ FROM --platform=linux/amd64 python:3.9.10
 RUN /usr/local/bin/python -m pip install --upgrade pip
 
 # install model dependencies
-COPY ../requirements/model_requirements.txt /requirements.txt
-RUN pip install -r /requirements.txt \
-    && rm /requirements.txt
-
+RUN pip install "pulsar-client==2.9.1" "elasticsearch==7.13.3"
 
 # set environment variables
 ARG PULSAR_HOST
 ARG PULSAR_PORT
-ARG MODEL_NAME
-ARG PRODUCER_TOPIC
 ARG CONSUMER_TOPIC
-ENV MODEL_NAME=${MODEL_NAME}
+ARG ELASTIC_INDEX
+ARG ELASTIC_HOST
+ARG ELASTIC_PORT
 ENV PULSAR_HOST=${PULSAR_HOST}
 ENV PULSAR_PORT=${PULSAR_PORT}
-ENV PRODUCER_TOPIC=${PRODUCER_TOPIC}
+ENV ELASTIC_INDEX=${ELASTIC_INDEX}
+ENV ELASTIC_PORT=${ELASTIC_PORT}
+ENV ELASTIC_HOST=${ELASTIC_HOST}
 ENV CONSUMER_TOPIC=${CONSUMER_TOPIC}
 
 # copy lib
 COPY ../lib /lib
 
-# copy decoy app
-COPY ../app/decoy.py /decoy.py
+# copy app
+COPY ../app/elasticsearch_connector.py /elasticsearch_connector.py
 
 # run
-ENTRYPOINT ["python", "/decoy.py"]
+ENTRYPOINT ["python", "/elasticsearch_connector.py"]

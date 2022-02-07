@@ -1,119 +1,182 @@
 version: "3.9"
 services:
   pulsar:
-    container_name: pulsar
+    container_name: ${PULSAR_HOST}
     image: apachepulsar/pulsar:2.9.1
-    ports:
-      - "8080:8080"
-      - "6650:6650"
     platform: linux/amd64
     volumes:
       - "pulsardata:/pulsar/data"
       - "pulsarconf:/pulsar/conf"
     command: "bin/pulsar standalone"
     restart: always
-    healthcheck:
-      test: [ "CMD", "nc", "-vz", "localhost", "6650" ]
-      interval: 20s
-      timeout: 5s
   lr_model:
-    container_name: lr_model
+    container_name: ${CANARY_MODEL_NAME}
     build:
       context: .
-      dockerfile: "Dockerfiles/lr_model.Dockerfile"
+      dockerfile: "Dockerfiles/prediction_model.Dockerfile"
       args:
         - SRC_MODEL_PATH=../models/lr.model
         - TGT_MODEL_PATH=/model/lr.model
-        - PULSAR_HOST=pulsar
-        - PULSAR_PORT=6650
-        - MODEL_NAME=lr
-        - MODEL_VERSION=0
-    restart: on-failure
+        - PULSAR_HOST=${PULSAR_HOST}
+        - PULSAR_PORT=${PULSAR_PORT}
+        - MODEL_NAME=${CANARY_MODEL_NAME}
+        - MODEL_VERSION=${CANARY_MODEL_VERSION}
+        - CONSUMER_TOPIC=${INPUT_DATA_TOPIC}
+    restart: always
     depends_on:
       - pulsar
   dt_model:
-    container_name: dt_model
+    container_name: ${PRODUCTION_MODEL_NAME}
     build:
       context: .
-      dockerfile: "Dockerfiles/lr_model.Dockerfile"
+      dockerfile: "Dockerfiles/prediction_model.Dockerfile"
       args:
         - SRC_MODEL_PATH=../models/dt.model
         - TGT_MODEL_PATH=/model/dt.model
-        - PULSAR_HOST=pulsar
-        - PULSAR_PORT=6650
-        - MODEL_NAME=dt
-        - MODEL_VERSION=1
-    restart: on-failure
+        - PULSAR_HOST=${PULSAR_HOST}
+        - PULSAR_PORT=${PULSAR_PORT}
+        - MODEL_NAME=${PRODUCTION_MODEL_NAME}
+        - MODEL_VERSION=${PRODUCTION_MODEL_VERSION}
+        - CONSUMER_TOPIC=${INPUT_DATA_TOPIC}
+    restart: always
     depends_on:
       - pulsar
   decoy_model:
-    container_name: decoy_model
+    container_name: ${DECOY_MODEL_NAME}
     build:
       context: .
       dockerfile: "Dockerfiles/decoy_model.Dockerfile"
       args:
-        - PULSAR_HOST=pulsar
-        - PULSAR_PORT=6650
-        - MODEL_NAME=decoy
-    restart: on-failure
+        - PULSAR_HOST=${PULSAR_HOST}
+        - PULSAR_PORT=${PULSAR_PORT}
+        - MODEL_NAME=${DECOY_MODEL_NAME}
+        - PRODUCER_TOPIC=${DECOY_OUTPUT_TOPIC}
+        - CONSUMER_TOPIC=${INPUT_DATA_TOPIC}
+    restart: always
     depends_on:
       - pulsar
   score:
-    container_name: score
+    container_name: ${SCORE_SERVICE_NAME}
     build:
       context: .
       dockerfile: "Dockerfiles/score.Dockerfile"
       args:
-        - PULSAR_HOST=pulsar
-        - PULSAR_PORT=6650
-        - TIMEOUT=1
-        - RET_TOPIC=score
-    restart: on-failure
+        - PULSAR_HOST=${PULSAR_HOST}
+        - PULSAR_PORT=${PULSAR_PORT}
+        - TIMEOUT=${SCORE_TIMEOUT}
+        - PRODUCER_TOPIC=${INPUT_DATA_TOPIC}
+        - RET_TOPIC=${MODEL_OUTPUT_TOPIC}
+    restart: always
     depends_on:
       - dt_model
       - lr_model
+      - kibana
+      - elastic_search
     ports:
       - "8000:8000"
   log_collector:
-    container_name: log_collector
+    container_name: ${LOG_COLLECTOR_SERVICE_NAME}
     build:
       context: .
       dockerfile: "Dockerfiles/log_collector.Dockerfile"
       args:
-        - PULSAR_HOST=pulsar
-        - PULSAR_PORT=6650
-        - TIMEOUT=5
-        - THRESHOLD=1000
-        - LOG_TOPIC=log
-        - OUTPUT_DIR=/logs
-    restart: on-failure
+        - PULSAR_HOST=${PULSAR_HOST}
+        - PULSAR_PORT=${PULSAR_PORT}
+        - TIMEOUT=${LOG_COLLECTOR_TIMEOUT}
+        - THRESHOLD=${LOG_COLLECTOR_THRESHOLD}
+        - CONSUMER_TOPIC=${DECOY_OUTPUT_TOPIC}
+        - OUTPUT_DIR=${LOG_COLLECTOR_OUTPUT_DIR}
+    restart: always
     depends_on:
       - decoy_model
     volumes:
-      - "logs:/logs"
+      - "logs:${LOG_COLLECTOR_OUTPUT_DIR}"
   score_collector:
-    container_name: score_collector
+    container_name: ${SCORE_COLLECTOR_SERVICE_NAME}
     build:
       context: .
       dockerfile: "Dockerfiles/log_collector.Dockerfile"
       args:
-        - PULSAR_HOST=pulsar
-        - PULSAR_PORT=6650
-        - TIMEOUT=5
-        - THRESHOLD=1000
-        - LOG_TOPIC=score
-        - OUTPUT_DIR=/scores
-    restart: on-failure
+        - PULSAR_HOST=${PULSAR_HOST}
+        - PULSAR_PORT=${PULSAR_PORT}
+        - TIMEOUT=${SCORE_COLLECTOR_TIMEOUT}
+        - THRESHOLD=${SCORE_COLLECTOR_THRESHOLD}
+        - CONSUMER_TOPIC=${MODEL_OUTPUT_TOPIC}
+        - OUTPUT_DIR=${SCORE_COLLECTOR_OUTPUT_DIR}
+    restart: always
     depends_on:
       - decoy_model
     volumes:
-      - "scores:/scores"
+      - "scores:${SCORE_COLLECTOR_OUTPUT_DIR}"
+  elastic_search:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
+    container_name: ${ELASTIC_HOST}
+    environment:
+      - node.name=${ELASTIC_HOST}
+      - cluster.name=es-docker-cluster
+      - cluster.initial_master_nodes=${ELASTIC_HOST}
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearchdata:/usr/share/elasticsearch/data
+    restart: always
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_URL: http://${ELASTIC_HOST}:9200
+      ELASTICSEARCH_HOSTS: '["http://${ELASTIC_HOST}:9200"]'
+    restart: always
+    depends_on:
+      - elastic_search
+  log_elasticsearch_connector:
+    container_name: log_elasticsearch_connector
+    build:
+      context: .
+      dockerfile: "Dockerfiles/elastic_connector.Dockerfile"
+      args:
+        - PULSAR_HOST=${PULSAR_HOST}
+        - PULSAR_PORT=${PULSAR_PORT}
+        - CONSUMER_TOPIC=${DECOY_OUTPUT_TOPIC}
+        - ELASTIC_INDEX=${ELASTIC_DECOY_INDEX}
+        - ELASTIC_HOST=${ELASTIC_HOST}
+        - ELASTIC_PORT=${ELASTIC_PORT}
+    restart: always
+    depends_on:
+      - decoy_model
+      - elastic_search
+      - kibana
+  score_elasticsearch_connector:
+    container_name: score_elasticsearch_connector
+    build:
+      context: .
+      dockerfile: "Dockerfiles/elastic_connector.Dockerfile"
+      args:
+        - PULSAR_HOST=${PULSAR_HOST}
+        - PULSAR_PORT=${PULSAR_PORT}
+        - CONSUMER_TOPIC=${MODEL_OUTPUT_TOPIC}
+        - ELASTIC_INDEX=${ELASTIC_SCORE_INDEX}
+        - ELASTIC_HOST=${ELASTIC_HOST}
+        - ELASTIC_PORT=${ELASTIC_PORT}
+    restart: always
+    depends_on:
+      - lr_model
+      - dt_model
+      - elastic_search
+      - kibana
 volumes:
   pulsardata:
   pulsarconf:
   logs:
   scores:
+  elasticsearchdata:
 networks:
   default:
-    name: pulsar-network
+    name: pulsar_network
     driver: bridge
