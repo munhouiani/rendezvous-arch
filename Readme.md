@@ -1,5 +1,6 @@
 # Simple Implementation of Rendezvous Architecture for Machine Learning Service
 
+Blog post: https://blog.munhou.com/2022/02/09/Simple-Implementation-of-Rendevzous-Architecture-for-Machine-Learning-Services/#more
 ## Architecture Diagram
 
 ![](resource/flow.png)
